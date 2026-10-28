@@ -8,14 +8,14 @@ A Spring Boot **monolithic** REST API to upload, store, organize, search, view, 
 
 ## 1. Tech stack
 
-| Area          | Choice                                                         |
-|---------------|----------------------------------------------------------------|
-| Language      | Java 21 (also runs on newer JDKs)                              |
+| Area          | Choice      |
+|---------------|-------------|
+| Language      | Java 21 (also runs on newer JDKs) |
 | Framework     | Spring Boot 4.1 (Spring MVC, Spring Data JPA, Spring Security 7) |
-| Auth          | Stateless JWT (jjwt 0.12), BCrypt password hashing             |
-| Database      | PostgreSQL (in-memory H2 is used only by the automated tests) |
+| Auth          | Stateless JWT (jjwt 0.12), BCrypt password hashing |
+| Database      | PostgreSQL |
 | File storage  | Local disk (`./uploads`) behind a `FileStorageService` interface |
-| Build / tests | Maven wrapper, JUnit 5 + MockMvc integration tests             |
+| Build / tests | Maven wrapper, JUnit 5 + MockMvc integration tests |
 
 ---
 
