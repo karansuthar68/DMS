@@ -410,11 +410,3 @@ curl error `(26) Failed to open/read local data` means the file path is wrong; u
 - **N+1 avoided** with `hibernate.default_batch_fetch_size`. Indexes exist on `owner_id` and
   `document_permissions.user_id`, which are the columns the access query filters on.
 
-## 12. Possible improvements
-
-- Content sniffing (Apache Tika) to verify that the file bytes match the extension, plus virus scanning.
-- Document versioning history instead of replacing the file.
-- Refresh tokens and token revocation.
-- Flyway migrations instead of `ddl-auto=update` for production schema changes.
-- Audit log of who viewed or downloaded what, and soft delete with a recycle bin.
-- OpenAPI / Swagger UI documentation.
