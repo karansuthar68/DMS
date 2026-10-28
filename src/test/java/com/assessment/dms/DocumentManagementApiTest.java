@@ -181,7 +181,7 @@ class DocumentManagementApiTest {
         // Shared users can read but never modify
         mockMvc.perform(delete("/api/documents/{id}", documentId).header(HttpHeaders.AUTHORIZATION, bearer(janeToken)))
                 .andExpect(status().isForbidden());
-        mockMvc.perform(post("/api/documents/{id}/permissions", documentId)
+        mockMvc.perform(post("/api/documents/{id}/permissions/access", documentId)
                         .header(HttpHeaders.AUTHORIZATION, bearer(janeToken))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"username\":\"admin\",\"accessLevel\":\"VIEW\"}"))
@@ -255,11 +255,11 @@ class DocumentManagementApiTest {
     @Test
     void requestFromApprovedOriginIsAllowed() throws Exception {
         mockMvc.perform(post("/api/auth/login")
-                        .header(HttpHeaders.ORIGIN, "https://portal.mycompany.com")
+                        .header(HttpHeaders.ORIGIN, "http://localhost:3000")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"username\":\"john\",\"password\":\"John@1234\"}"))
                 .andExpect(status().isOk())
-                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "https://portal.mycompany.com"));
+                .andExpect(header().string(HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, "http://localhost:3000"));
     }
 
     @Test
@@ -296,7 +296,7 @@ class DocumentManagementApiTest {
     }
 
     private void grant(String ownerToken, long documentId, String username, String accessLevel) throws Exception {
-        mockMvc.perform(post("/api/documents/{id}/permissions", documentId)
+        mockMvc.perform(post("/api/documents/{id}/permissions/access", documentId)
                         .header(HttpHeaders.AUTHORIZATION, bearer(ownerToken))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"username\":\"%s\",\"accessLevel\":\"%s\"}".formatted(username, accessLevel)))

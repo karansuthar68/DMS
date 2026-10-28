@@ -31,11 +31,15 @@ psql -U postgres -c "CREATE DATABASE dms;"   # one-time setup
 ./mvnw spring-boot:run
 ```
 
-The default connection is `postgres` / `postgres`. Override it with environment variables if yours differs:
+The connection is configured in `src/main/resources/application.properties`:
 
-```bash
-DB_URL=jdbc:postgresql://localhost:5432/dms DB_USERNAME=myuser DB_PASSWORD=secret ./mvnw spring-boot:run
+```properties
+spring.datasource.url=jdbc:postgresql://localhost:5432/dms
+spring.datasource.username=postgres
+spring.datasource.password=postgres
 ```
+
+Change these three lines if your PostgreSQL uses a different host, database, user or password.
 
 The API starts on **http://localhost:8080**. On first start three demo users are created:
 
@@ -48,11 +52,14 @@ The API starts on **http://localhost:8080**. On first start three demo users are
 Other useful commands:
 
 ```bash
-./mvnw test        # run the 15 integration tests (in-memory H2, PostgreSQL not needed)
+./mvnw test        # run the 17 integration tests (in-memory H2, PostgreSQL not needed)
 psql -U postgres -d dms -c "\dt"   # list the tables Hibernate created
 ```
 
-- **Postman:** import `postman/DMS.postman_collection.json`. The login requests save the tokens automatically.
+- **Sample files:** `sample-reports/` has 22 reports with made-up data, grouped by category
+  (Finance, Company, HR, Sales, Marketing, Legal, IT, Operations) and covering every supported file type.
+  Use them to try uploads, search and sharing.
+- **Uploaded files** are stored on disk in `uploads/` (see [File handling](#7-file-handling)).
 - **Reset everything:** stop the app, run `DROP DATABASE dms; CREATE DATABASE dms;`, and delete the `uploads/` folder.
 - **Why tests use H2:** each test run gets a fresh, isolated database, so tests are fast, repeatable and
   never touch the real PostgreSQL data. The data layer is pure JPA, so the same code runs on both.
@@ -60,6 +67,16 @@ psql -U postgres -d dms -c "\dt"   # list the tables Hibernate created
 ---
 
 ## 3. Project structure
+
+```
+document-management-system/
+├── src/main/java/...         application code (packages below)
+├── src/main/resources/       application.properties
+├── src/test/                 MockMvc integration tests + application-test.properties (H2)
+├── postman/                  DMS.postman_collection.json
+├── sample-reports/           sample files for testing uploads, one folder per category
+└── uploads/                  uploaded files (created at runtime, git-ignored)
+```
 
 The code is layered, and each package has one responsibility:
 
@@ -178,6 +195,9 @@ on the controllers.
 | User granted `DOWNLOAD`   | ✅ | ✅ | ❌ |
 | Anyone else               | ❌ 403 | ❌ 403 | ❌ 403 |
 
+Access levels are hierarchical: `DOWNLOAD` includes `VIEW`, because anyone who can download a file can
+already read it. Sharing again with a different level replaces the previous one.
+
 The list and search endpoint (`GET /api/documents`) filters in the database query itself, so a user only ever
 sees documents they own or that were shared with them.
 
@@ -189,8 +209,10 @@ The approved domains are set in `application.properties`:
 
 ```properties
 app.domain-restriction.enabled=true
-app.domain-restriction.allowed-domains=localhost,127.0.0.1,*.mycompany.com
+app.domain-restriction.allowed-domains=localhost,127.0.0.1
 ```
+
+To approve a real domain, add it to the list, for example `localhost,127.0.0.1,*.mycompany.com`.
 
 They are enforced at three levels:
 
@@ -202,7 +224,7 @@ They are enforced at three levels:
 3. **CORS**, configured in `SecurityConfig`. Browsers on the approved domains, on any port and over http or
    https, may call the API, and preflight requests are answered correctly.
 
-A `*.mycompany.com` entry matches any sub-domain, such as `portal.mycompany.com`.
+A wildcard entry such as `*.mycompany.com` matches any sub-domain, such as `portal.mycompany.com`.
 
 > **Interview note:** Non-browser clients can forge headers, so in production this filter is one layer.
 > It sits alongside network-level controls: a reverse proxy or API gateway (Nginx, AWS ALB) that only routes
@@ -217,12 +239,20 @@ A `*.mycompany.com` entry matches any sub-domain, such as `portal.mycompany.com`
   `SupportedFileType` enum.
 - **Validation:** `FileValidator` rejects empty files, files without a name and unsupported extensions with
   `400`. The stored MIME type comes from the whitelist, **not from the client's `Content-Type`**.
-- **Size limit:** 10 MB, set by `spring.servlet.multipart.max-file-size`. Larger files get a clean `413` JSON
-  response.
+- **Size limits:** 10 MB per file (`spring.servlet.multipart.max-file-size`) and 100 MB per request
+  (`spring.servlet.multipart.max-request-size`). Larger uploads get a clean `413` JSON response.
+- **Multiple files in one request:** send up to 10 files under the `files` key. Each file becomes its own
+  document. `description` and `category` apply to all of them. `title` is used only for a single-file upload;
+  otherwise each document is titled with its file name.
+- **All-or-nothing uploads:** every file is validated before anything is saved, so one invalid file rejects
+  the whole request. Rows are saved in one transaction, and if anything fails, the files already written to
+  disk are deleted.
+- **Where files go:** the bytes are written to the `uploads/` folder (`app.storage.upload-dir`, relative to
+  where the app is started). PostgreSQL stores only the details: original name, stored name, type, size, owner.
 - **Safe storage:** files are saved as `<UUID>.<ext>`, so user input never decides the path on disk. The
   original name is kept only for display and downloads. The storage service also guards against path traversal.
-- **Consistency:** if saving the database row fails, the file just written is deleted. When a file is
-  replaced, the old file is removed only after the database points to the new one.
+- **Consistency:** when a file is replaced, the old file is removed only after the database points to the
+  new one.
 - **Swappable storage:** services depend on the `FileStorageService` interface, so an S3 implementation could
   replace `LocalFileStorageService` without changing them.
 
@@ -250,7 +280,7 @@ Every error, whether from controllers, services or security filters, has the sam
 | Missing / invalid / expired token, wrong password, disabled account | 401 |
 | Not allowed (role, document permission, unapproved domain) | 403 |
 | Document / user / endpoint not found             | 404    |
-| Wrong HTTP method / content type                 | 405 / 415 |
+| Wrong HTTP method / content type (e.g. `POST /api/documents` without a multipart body) | 405 / 415 |
 | Duplicate username or email                      | 409    |
 | File larger than 10 MB                           | 413    |
 | Storage failure / unexpected error (logged, details hidden from client) | 500 |
@@ -277,7 +307,7 @@ same JSON for them.
 | PUT    | `/api/documents/{id}/file` *(multipart)*       | Replace the file with a new version           |
 | DELETE | `/api/documents/{id}`                          | Delete document and file                      |
 | GET    | `/api/documents/{id}/permissions`              | Who the document is shared with               |
-| POST   | `/api/documents/{id}/permissions`              | Share: `{"username":"jane","accessLevel":"VIEW"}` (also changes level) |
+| POST   | `/api/documents/{id}/permissions/access`       | Share: `{"username":"jane","accessLevel":"VIEW"}` (also changes level) |
 | DELETE | `/api/documents/{id}/permissions/{userId}`     | Revoke access                                 |
 | GET    | `/api/admin/users`                             | List users *(ADMIN)*                          |
 | GET    | `/api/admin/users/{id}`                        | Get user *(ADMIN)*                            |
@@ -290,7 +320,30 @@ Sortable fields: `title, category, originalFileName, fileSize, createdAt, update
 
 ---
 
-## 10. Quick demo with curl
+## 10. Testing the API
+
+### With Postman
+
+1. Import `postman/DMS.postman_collection.json`.
+2. Run **1. Auth → Login as User / Login as Admin** first. Their scripts save the tokens into collection
+   variables (`johnToken`, `janeToken`, `adminToken`). The upload request saves `documentId`.
+3. To see or edit the variables, click the collection name → **Variables** tab, or hover over any `{{variable}}`.
+
+Folders: **1. Auth**, **2. Documents For Admin**, **3. Documents For User**, **3. Sharing & access control**,
+**4. Admin**, **5. Error scenarios**.
+
+Tips:
+- Each request sends its token through the **Authorization** tab (Bearer Token). A variable with a red dot is
+  undefined, so the request goes out without a token and returns **401**.
+- The Authorization tab overrides a manually added `Authorization` header.
+- To upload, use Body → **form-data**, key `files` with type **File**, and select one or more files. Do not set
+  `Content-Type` yourself; Postman adds the multipart boundary.
+- `GET /api/documents` searches, `POST /api/documents` uploads. Sending POST without a file gives **415**.
+- Tokens expire after 60 minutes. Log in again when requests start returning 401.
+
+### With curl
+
+Run the commands in the same terminal so the token variables stay set.
 
 ```bash
 # 1. Log in as john and as jane
@@ -299,26 +352,35 @@ JOHN=$(curl -s -X POST localhost:8080/api/auth/login -H 'Content-Type: applicati
 JANE=$(curl -s -X POST localhost:8080/api/auth/login -H 'Content-Type: application/json' \
   -d '{"username":"jane","password":"Jane@1234"}' | sed -E 's/.*"accessToken":"([^"]+)".*/\1/')
 
-# 2. john uploads a document (repeat -F files=@... to upload several at once)
-curl -X POST localhost:8080/api/documents -H "Authorization: Bearer $JOHN" \
-  -F files=@/path/to/report.pdf -F title="Q3 Report" -F category=Finance
+# 2. john uploads several sample files in one request (use absolute paths, or run from sample-reports/)
+D=$PWD/sample-reports/Finance
+curl -X POST localhost:8080/api/documents -H "Authorization: Bearer $JOHN" -F category=Finance \
+  -F "files=@$D/Quarterly_Financial_Report_FY2025-26.pdf" \
+  -F "files=@$D/Monthly_Expense_Sheet_2026.xlsx" \
+  -F "files=@$D/Revenue_Growth_Chart.png"
+#    -> 201 with a list of documents; note the first "id" and use it below as <id>
 
 # 3. jane cannot see it yet -> 403
-curl -i localhost:8080/api/documents/1 -H "Authorization: Bearer $JANE"
+curl -i localhost:8080/api/documents/<id> -H "Authorization: Bearer $JANE"
 
 # 4. john shares it with jane (view only)
-curl -X POST localhost:8080/api/documents/1/permissions -H "Authorization: Bearer $JOHN" \
+curl -X POST localhost:8080/api/documents/<id>/permissions/access -H "Authorization: Bearer $JOHN" \
   -H 'Content-Type: application/json' -d '{"username":"jane","accessLevel":"VIEW"}'
 
 # 5. jane can view (200) but not download (403)
-curl -i localhost:8080/api/documents/1/view     -H "Authorization: Bearer $JANE"
-curl -i localhost:8080/api/documents/1/download -H "Authorization: Bearer $JANE"
+curl -i localhost:8080/api/documents/<id>/view     -H "Authorization: Bearer $JANE"
+curl -i localhost:8080/api/documents/<id>/download -H "Authorization: Bearer $JANE"
 
-# 6. Unsupported file type -> 400, request from unapproved domain -> 403
-curl -X POST localhost:8080/api/documents -H "Authorization: Bearer $JOHN" -F file=@/path/to/app.exe
+# 6. Search
+curl "localhost:8080/api/documents?keyword=Report&sort=createdAt,desc" -H "Authorization: Bearer $JOHN"
+
+# 7. Unsupported file type -> 400, request from unapproved domain -> 403
+curl -X POST localhost:8080/api/documents -H "Authorization: Bearer $JOHN" -F files=@/path/to/app.exe
 curl -i localhost:8080/api/auth/login -H 'Origin: https://evil-site.com' \
   -H 'Content-Type: application/json' -d '{"username":"john","password":"John@1234"}'
 ```
+
+curl error `(26) Failed to open/read local data` means the file path is wrong; use an absolute path.
 
 ---
 
@@ -329,6 +391,13 @@ curl -i localhost:8080/api/auth/login -H 'Origin: https://evil-site.com' \
 - **DTOs instead of entities in responses:** prevents leaking fields such as the password hash or the stored
   file name, and avoids lazy-loading and JSON recursion problems. `open-in-view` is disabled, so all data is
   loaded inside service transactions.
+- **Register vs admin create user:** `/api/auth/register` is public self-signup, so the role is always USER
+  (accepting a role there would let anyone make themselves admin). `/api/admin/users` is admin-only and can
+  assign any role. Both call the same `UserService.createUser`, so no logic is duplicated.
+- **JWT in the `Authorization: Bearer` header:** the standard place for credentials. Tokens in URLs leak into
+  logs, and cookies would need CSRF protection. Without server sessions, the app can scale horizontally.
+- **Files on disk, details in the database:** keeps PostgreSQL small and backups fast. Moving to S3 only needs
+  a new `FileStorageService` implementation.
 - **One class for document authorization (`DocumentAccessService`):** the rules are easy to review and test,
   and no controller can forget a check.
 - **403 vs 404 for documents you cannot access:** this project returns 403 because it is clearer to explain.
